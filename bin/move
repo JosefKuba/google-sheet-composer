@@ -1,0 +1,3 @@
+#! /bin/bash
+
+mv data/database/friends_tmp/* data/database/friends/

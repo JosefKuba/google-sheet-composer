@@ -19,7 +19,7 @@ return [
         'page'      => \App\Services\PageService::class,
         'group'     => \App\Services\GroupService::class,
         'command'   => \App\Services\CommandService::class,
-        'redis'     => \App\Services\RedisService::class,
+        // 'redis'     => \App\Services\RedisService::class,
         'language'  => \App\Services\LanguageService::class,
         'friend'    => \App\Services\FriendService::class,
         'faith'     => \App\Services\FaithService::class,

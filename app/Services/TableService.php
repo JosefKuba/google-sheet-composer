@@ -27,7 +27,7 @@ class TableService implements ServiceInterface
      *  - url
      *  - sheetName             下载单个分页中所有的数据 时，需要指定 分页名称
      */
-    private $indexSheetApi = "https://script.google.com/macros/s/AKfycbwaDanrInNiLkWL6xl0fiBANVBIBkzjeJD5DizaDTBJJBZSIaSTHtksf4GH1opTyN4/exec";
+    private $indexSheetApi = "https://script.google.com/macros/s/AKfycbyNvRuHDaO8NQhj3iAjCFnMfoBJHE46Ks7VOV0PwEtl2BJxUgVew_0QwfflcnGFhcgC/exec";
 
     private $token = "1F2eFbVgYX.jS3LhM53OL";
 
@@ -56,17 +56,15 @@ class TableService implements ServiceInterface
     // 收集本次下载的chatbot的路径
     private $chatbotPahts = [];
 
-    // public function __construct( )
-    // {
-    //     $this->indexSheetApi = $_ENV['DEPLOY_LINK'];
 
-    //     $this->token = $_ENV['TOKEN'];
-    // }
+    // 下载下来的配置文件的路径
+    private $namePath =  "";
 
     public function load(App $app): void
     {
         $this->app = $app;
     }
+
 
     // 发帖表内容去重
     public function postFillFormTableUnique()
@@ -122,7 +120,7 @@ class TableService implements ServiceInterface
     }
 
     // 下载发帖表
-    public function handlePostFillFormTable()
+    public function downloadPostFillFormTable()
     {
         // 1. 获取发帖登记表的链接
         $startTime = time();
@@ -176,11 +174,11 @@ class TableService implements ServiceInterface
         }
 
         // 统计发帖数据
-        $this->statisticGroupsPost();
+        // $this->statisticGroupsPost();
     }
 
-    // 下载chatbot表
-    public function handleChatbotTable()
+    // 下载chatbot表格
+    public function downloadChatbotTable()
     {
         // 1. 获取发帖登记表的链接
         $startTime = time();
@@ -215,7 +213,7 @@ class TableService implements ServiceInterface
             if (str_contains($url, "https")) {
                 $startTime = time();
 
-                $_url = $this->getApiUrl('post_auto_fill', $url);
+                $_url = $this->getApiUrl('signal_sheet', $url, "订阅");
                 $content = $this->fetchWithRetry($_url);
 
                 if ($content === false) {
@@ -233,9 +231,6 @@ class TableService implements ServiceInterface
                 $this->app->info(sprintf("%d / %d; %s 下载完成; 用时 %d 秒", ($key+1), count($lines), $name, ($endTime - $startTime)));
             }
         }
-
-        // 统计引流数据
-        $this->statisticChatbot();
     }
 
 
@@ -418,6 +413,123 @@ class TableService implements ServiceInterface
         $this->uploadGoogleSheet($this->groupBaseDataSheetUrl, $this->groupChatbotSheetName, $uploadData);
     }
 
+    // 统计每个帖文的引流量
+    public function statisticPostEffect() 
+    {
+        $files = glob(TABLE_INPUT_PATH . "*FB*");
+
+        $results = [];
+        $collectPosts = [];
+
+        foreach ($files as $file) {
+            $lines = getLine($file);
+
+            foreach ($lines as $line) {
+                $lineArr = explode("\t", $line);
+
+                $date = $lineArr[5] ?? "";
+                $link = trim($lineArr[9] ?? "", "/");
+
+                if (empty($date) || empty($link)) {
+                    continue;
+                }
+
+                $dateToNow = $this->daysSinceJsDate($date);
+                
+                // todo 每次使用需要修改
+                if ( $dateToNow < 1 || $dateToNow >= 9 ) {
+                    continue;
+                }
+
+                $collectPosts[] = $line;
+
+                $delimiter = str_contains($link, "_") ? "_" : "/";
+
+                $_arr = explode($delimiter, $link);
+                $id = array_pop($_arr);
+
+                if (array_key_exists($id, $results)) {
+                    $results[$id]['count']++;
+                } else {
+                    $results[$id] = [
+                        'count' => 1,
+                        'link'  => $link,
+                    ];
+                }
+            }
+        }
+
+        $output = "";
+        foreach ($results as $id => $item) {
+            if ($item['count'] < 50) {
+                continue;
+            }
+
+            $output .= $id . "\t" . $item['count']  . "\t" . $item['link'] . "\n";
+        }
+
+        $path = TABLE_OUTPUT_PATH . CURRENT_TIME . " result.tsv";
+        file_put_contents($path, $output);
+
+        $path = TABLE_OUTPUT_PATH . CURRENT_TIME . " posts.tsv";
+        file_put_contents($path, implode(PHP_EOL, $collectPosts));
+
+        $this->app->info("引流帖文统计完成");
+    }
+
+    // 下载帖文果效表
+    public function downloadPostEffectTable()
+    {
+        // 1. 获取发帖登记表的链接
+        $startTime = time();
+
+        $_url = $this->getApiUrl('signal_sheet', $this->indexSheetUrl, "帖文果效表");
+        $content = $this->fetchWithRetry($_url);
+
+        // 请求失败，比如 404、超时、DNS 错误等
+        if ($content === false) {
+            $this->app->error("获取发帖登记表 链接 失败");
+            die;
+        }
+
+        $endTime = time();
+
+        $path = TABLE_INPUT_PATH . CURRENT_TIME . " 帖文果效表.tsv";
+
+        file_put_contents($path, $content);
+        
+        $this->app->info(sprintf("帖文果效表下载完成; 用时 %s 秒", $endTime - $startTime));
+
+        // 2. 下载每一个链接
+        $lines = getLine($path);
+
+        foreach ($lines as $key => $line) {
+            
+            $lineArr = explode("\t", $line);
+
+            $name   = $lineArr[1] ?? ""; 
+            $url    = $lineArr[2] ?? "";
+
+            if (str_contains($url, "https")) {
+                $startTime = time();
+
+                $_url = $this->getApiUrl('post_effect', $url);
+                $content = $this->fetchWithRetry($_url);
+
+                if ($content === false) {
+                    $this->app->error(sprintf("获取帖文果效表: %s 内容失败", $name));
+                    continue;
+                }
+
+                $path = TABLE_INPUT_PATH . CURRENT_TIME . " " . $name . ".tsv";
+                file_put_contents($path, $content);
+
+                $endTime = time();
+
+                $this->app->info(sprintf("%d / %d; %s 下载完成; 用时 %d 秒", ($key+1), count($lines), $name, ($endTime - $startTime)));
+            }
+        }
+    }
 
     // 备份 chatbot 表格
     public function backupChatbotTable()
@@ -559,6 +671,121 @@ class TableService implements ServiceInterface
         }
     }
 
+    // 下载帖文一览表中的专页帖文和小组帖文
+    public function downloadPost() 
+    {
+        // todo
+        // 1. 获取发帖登记表的链接
+        $startTime = time();
+
+        $_url = $this->getApiUrl('signal_sheet', $this->indexSheetUrl, "【一览表】帖文");
+        $content = $this->fetchWithRetry($_url);
+
+        // 请求失败，比如 404、超时、DNS 错误等
+        if ($content === false) {
+            $this->app->error("获取链接失败");
+            die;
+        }
+
+        $endTime = time();
+
+        $namePath = TABLE_INPUT_PATH . CURRENT_TIME . " 帖文链接.tsv";
+
+        $this->namePath = $namePath;
+
+        file_put_contents($namePath, $content);
+        
+        $this->app->info(sprintf("帖文链接下载完成; 用时 %s 秒", $endTime - $startTime));
+
+        // 2. 下载每一个链接
+        $lines = getLine($namePath);
+
+        foreach ($lines as $key => $line) {
+            $lineArr = explode("\t", $line);
+            $name = $lineArr[0];
+            $pageUrl = $lineArr[1];
+            $groupUrl = $lineArr[2];
+
+            // 下载专页帖文
+            if (str_contains($pageUrl, "https")) {
+                $startTime = time();
+
+                $_url = $this->getApiUrl('page_post', $pageUrl);
+                
+                $content = $this->fetchWithRetry($_url);
+
+                if ($content === false) {
+                    $this->app->error(sprintf("下载专页帖文: %s 内容失败", $name));
+                    continue;
+                }
+
+                $path = TABLE_INPUT_PATH . CURRENT_TIME . " " . $name . " 专页帖文.tsv";
+                file_put_contents($path, $content);
+
+                $endTime = time();
+
+                $this->app->info(sprintf("%d / %d; %s 专页帖文下载完成; 用时 %d 秒", ($key+1), count($lines), $name, ($endTime - $startTime)));
+            }
+
+            // 下载小组帖文
+            if (str_contains($groupUrl, "https")) {
+                $startTime = time();
+
+                $_url = $this->getApiUrl('group_post', $groupUrl);
+                
+                $content = $this->fetchWithRetry($_url);
+
+                if ($content === false) {
+                    $this->app->error(sprintf("下载小组帖文: %s 内容失败", $name));
+                    continue;
+                }
+
+                $path = TABLE_INPUT_PATH . CURRENT_TIME  . " " . $name . " 小组帖文.tsv";
+                file_put_contents($path, $content);
+
+                $endTime = time();
+
+                $this->app->info(sprintf("%d / %d; %s 小组帖文下载完成; 用时 %d 秒", ($key+1), count($lines), $name, ($endTime - $startTime)));
+            }
+        }
+    }
+
+    // 匹配帖文信息
+    public function matchPostDetails()
+    {
+        // if (empty($this->namePath)) {
+        //     $this->namePath = TABLE_INPUT_PATH . 
+        // }
+        // $lines = getLine($this->namePath);
+
+        $files = glob(TABLE_INPUT_PATH . "*帖文.tsv");
+
+        $postCollections = [];
+        foreach ($files as $file) {
+            $lines = getLine($file);
+            foreach ($lines as $line) {
+                $lineArr = explode("\t", $line);
+                $id = $lineArr[0];
+
+                if (!array_key_exists($id, $postCollections)) {
+                    $postCollections[$id] = $line;
+                }
+            }
+        }
+
+        $ids = getLine( TABLE_INPUT_PATH . "ids" );
+        
+        $results = [];
+        foreach ($ids as $id) {
+            $results[$id] = $postCollections[$id] ?? "";
+        }
+
+        $path = TABLE_OUTPUT_PATH . CURRENT_TIME . " result.tsv";
+        file_put_contents($path, implode(PHP_EOL, $results));
+
+        $this->app->info("帖文匹配完成");
+    }
+
     // 重新尝试获取失败的链接
     private function fetchWithRetry($url, $context = [], $maxRetries = 3, $waitTime = 2) {
 
@@ -589,6 +816,15 @@ class TableService implements ServiceInterface
     // 获取访问api的完整链接
     private function getApiUrl($type, $url, $sheetName = "", $startRow=0)
     {
+        $id = $this->getIdFromeSheetUrl($url);
+        return $this->indexSheetApi . sprintf("?type=%s&url=%s&sheetName=%s&token=%s&startRow=%s", $type, $id, $sheetName, $this->token, $startRow);
+    }
+
+    // 获取访问api的完整链接
+    private function getApiUrlNew($args)
+    {
+        $url = $args['url'] ?? "";
+
         $id = $this->getIdFromeSheetUrl($url);
         return $this->indexSheetApi . sprintf("?type=%s&url=%s&sheetName=%s&token=%s&startRow=%s", $type, $id, $sheetName, $this->token, $startRow);
     }

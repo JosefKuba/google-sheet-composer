@@ -41,10 +41,12 @@ class GroupController extends CommandController
         $tableService = $this->getApp()->table;
 
         // 处理 发帖登记表 数据
-        $tableService->handlePostFillFormTable();
+        $tableService->downloadPostFillFormTable();
+        $tableService->statisticGroupsPost();
 
         // 处理 chatbot表 数据
-        $tableService->handleChatbotTable();
+        $tableService->downloadChatbotTable();
+        $tableService->statisticChatbot();
     }
 
     public function test() {
